@@ -1,70 +1,87 @@
-name: HACHIMI Daily Checkin
+name: 🍓 Hachimi Auto Checkin
 
 on:
-  # ✅ 每天 UTC 18:30 自动运行
-  schedule:
-    - cron: '20 18 * * *'
-  
-  # ✅ 允许手动点 Run
   workflow_dispatch:
+  schedule:
+    # UTC 00:12 = 北京时间 08:12
+    - cron: "12 0 * * *"
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: hachimi-auto-checkin
+  cancel-in-progress: false
 
 jobs:
-  checkin:
+  run:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
-      # =========================
-      # 📥 检出私库 
-      # =========================
-      - name: Checkout private repo (hohai-auto)
+      # 1️⃣ 检出当前仓库
+      - name: 📥 Checkout 仓库
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.repository_owner }}/hachimi-auto
-          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
-          path: scripts
+          fetch-depth: 0
 
-      # =========================
-      # 🐍 Python
-      # =========================
-      - name: Setup Python
+      # 2️⃣ 设置 Python
+      - name: 🐍 设置 Python 3.10
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.10"
+          cache: "pip"
 
-      # =========================
-      # 📦 系统依赖
-      # =========================
-      - name: Install system dependencies
-        working-directory: scripts
+      # 3️⃣ 安装系统依赖（Xvfb + 中文字体）
+      - name: 📦 安装系统依赖
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            xvfb \
-            fonts-noto-cjk \
-            fonts-dejavu-core \
-            python3-tk \
-            python3-dev \
-            curl
+          sudo apt-get install -y xvfb fonts-noto-cjk fonts-noto-cjk-extra
 
-      # =========================
-      # 📦 Python 依赖
-      # =========================
-      - name: Install Python dependencies
-        working-directory: scripts
+      # 4️⃣ 安装 Python 依赖
+      - name: 📚 安装 Python 依赖
         run: |
-          python -m pip install --upgrade pip
-          pip install -q seleniumbase pyvirtualdisplay requests
+          pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            echo "⚠️ 未找到 requirements.txt"
+          fi
 
-      # =========================
-      # 🌟 执行 hachimi_checkin.py
-      # =========================
-      - name: Run Hohai Daily Checkin
-        working-directory: scripts
+      # 5️⃣ 安装 Playwright 浏览器
+      - name: 🌐 安装 Playwright
+        run: |
+          python -m playwright install --with-deps chromium
+
+      # 6️⃣ 随机延迟（防风控）
+      - name: ⏳ 随机延迟
+        run: |
+          delay=$((RANDOM % 120))
+          echo "延迟 ${delay} 秒"
+          sleep $delay
+
+      # 7️⃣ 执行签到脚本
+      - name: 🚀 执行 Hachimi 签到
         env:
           HACHIMI_BATCH: ${{ secrets.HACHIMI_BATCH }}
         run: |
-          python hachimi_checkin.py
+          xvfb-run -a python hachimi_checkin.py
+
+      # 8️⃣ 提交时间文件
+      - name: ⏱️ 更新时间文件
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com]"
+          mkdir -p hachimi
+          echo "$(date +'%Y-%m-%d %H:%M:%S')" > hachimi/time.txt
+          git add hachimi/time.txt 2>/dev/null || true
+
+          if git diff --cached --quiet; then
+            echo "无变化"
+          else
+            git fetch origin main
+            git rebase origin/main
+            git commit -m "⏱️ 更新 hachimi 签到时间"
+            git push origin HEAD:main
+          fi
